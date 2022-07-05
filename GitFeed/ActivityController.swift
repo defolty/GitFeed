@@ -47,6 +47,9 @@ class ActivityController: UITableViewController {
   ///# это URL файла, где мы будем хранить файл событий на диске нашего устройства.
   ///# ниже реализуем функцию cachedFileURL, чтобы получить URL, по которому можно читать и записывать файлы
   private let eventsFileURL = cachedFileURL("events.json")
+  private let modifiedFileURL = cachedFileURL("modified.txt")
+  
+  private let lastModified = BehaviorRelay<String?>(value: nil)
   
   private let repo = "ReactiveX/RxSwift"
   
@@ -66,6 +69,11 @@ class ActivityController: UITableViewController {
     refreshControl.addTarget(self, action: #selector(refresh), for: .valueChanged)
      
     loadDataFromDisk()
+    
+    if let lastModifiedString = try? String(contentsOf: modifiedFileURL, encoding: .utf8) {
+      lastModified.accept(lastModifiedString)
+    }
+    
     refresh()
   }
   
@@ -93,8 +101,12 @@ class ActivityController: UITableViewController {
       .map { urlString -> URL in
         return URL(string: "https://api.github.com/repos/\(urlString)/events")!
       }
-      .map { url -> URLRequest in
-        return URLRequest(url: url)
+      .map { [weak self] url -> URLRequest in
+        var request = URLRequest(url: url)
+        if let modifiedHeader = self?.lastModified.value {
+          request.addValue(modifiedHeader, forHTTPHeaderField: "Last-Modified")
+        }
+        return request
       }
       .flatMap { request -> Observable<(response: HTTPURLResponse, data: Data)> in
         ///# `URLSession.rx.response(request:)` отправляет ваш запрос на сервер,
@@ -124,6 +136,25 @@ class ActivityController: UITableViewController {
     
       .subscribe(onNext: { [weak self] newEvents in
         self?.processEvents(newEvents)
+      })
+    
+      .disposed(by: disposeBag)
+    
+    response
+      .filter { response, _ in
+        return 200..<400 ~= response.statusCode
+      }
+      .flatMap { response, _ -> Observable<String> in
+        guard let value = response.allHeaderFields["Last-Modified"] as? String else {
+          return Observable.empty()
+        }
+        return Observable.just(value)
+      }
+      .subscribe(onNext: { [weak self] modifiedHeader in
+        guard let self = self else { return }
+        
+        self.lastModified.accept(modifiedHeader)
+        try? modifiedHeader.write(to: self.modifiedFileURL, atomically: true, encoding: .utf8)
       })
     
       .disposed(by: disposeBag)
