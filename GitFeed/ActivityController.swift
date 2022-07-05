@@ -97,7 +97,9 @@ class ActivityController: UITableViewController {
   }
   
   func fetchEvents(repo: String) {
-    let response = Observable.from([repo])
+    ///# Эта API возвращает список пяти самых популярных репозиториев Swift.
+    ///# Поскольку мы не указали параметр порядка в этом вызове API, GitHub упорядочит возвращаемые результаты по их "оценке"
+    let response = Observable.from(["https://api.github.com/search/repositories?q=language:swift&per_page=5"])
       .map { urlString -> URL in
         return URL(string: "https://api.github.com/repos/\(urlString)/events")!
       }
