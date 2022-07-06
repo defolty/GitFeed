@@ -99,43 +99,47 @@ class ActivityController: UITableViewController {
   func fetchEvents(repo: String) {
     ///# Эта API возвращает список пяти самых популярных репозиториев Swift.
     ///# Поскольку мы не указали параметр порядка в этом вызове API, GitHub упорядочит возвращаемые результаты по их "оценке"
-    let response = Observable.from(["https://api.github.com/search/repositories?q=language:swift&per_page=5"])
+    let response = Observable
+      .from(["https://api.github.com/search/repositories?q=language:swift&per_page=5"])
+      .map { urlString -> URL in
+        return URL(string: urlString)!
+      }
+      .flatMap { url -> Observable<Any> in
+        let request = URLRequest(url: url)
+        return URLSession.shared.rx.json(request: request)
+      }
+      .flatMap { response -> Observable<String> in
+        guard let response = response as? [String: Any],
+        let items = response["items"] as? [[String: Any]] else {
+          return Observable.empty()
+        }
+        
+        return Observable.from(items.map { $0["full_name"] as! String })
+      }
       .map { urlString -> URL in
         return URL(string: "https://api.github.com/repos/\(urlString)/events")!
       }
+    
       .map { [weak self] url -> URLRequest in
         var request = URLRequest(url: url)
         if let modifiedHeader = self?.lastModified.value {
-          request.addValue(modifiedHeader, forHTTPHeaderField: "Last-Modified")
+          request.addValue(modifiedHeader,
+                           forHTTPHeaderField: "Last-Modified")
         }
         return request
       }
       .flatMap { request -> Observable<(response: HTTPURLResponse, data: Data)> in
-        ///# `URLSession.rx.response(request:)` отправляет ваш запрос на сервер,
-        ///# а после получения ответа испускает событие `.next` только один раз с возвращенными данными, а затем завершает работу.
         return URLSession.shared.rx.response(request: request)
       }
-      ///# чтобы поделиться наблюдаемой и сохранить в буфере последнее испущенное событие
       .share(replay: 1)
-      ///# эмпирическое правило использования `share(replay:scope:)` заключается в том,
-      ///# чтобы использовать его для любых последовательностей, которые вы ожидаете завершить, или последовательностей,
-      ///# которые вызывают большую нагрузку и на которые подписываются несколько раз
     
     response
-      ///# c помощью `.filter` отбрасываем все коды ответов с ошибками.
-      ///# `.filter` будет пропускать только ответы с кодом состояния между 200 и 300, то есть все коды состояния .success
       .filter { response, _ in
-        return 200..<300 ~= response.statusCode /// `~=` который при использовании с диапазоном в левой части проверяет, включает ли диапазон значение в правой части.
+        return 200..<300 ~= response.statusCode
       }
-    
-      ///# `compactMap` - пропускаем любые значения без nil и фильтруем любые nil
-      ///# отбрасываем объект ответа и берём только данные ответа.
       .compactMap { _, data -> [Event]? in
-        ///# создаём `JSONDecoder` и пытаемся декодировать данные ответа как массив `Events`
-        ///# `try?` для возврата значения `nil` в случае, если декодер выдает ошибку при декодировании данных `JSON`
         return try? JSONDecoder().decode([Event].self, from: data)
       }
-    
       .subscribe(onNext: { [weak self] newEvents in
         self?.processEvents(newEvents)
       })
@@ -159,7 +163,7 @@ class ActivityController: UITableViewController {
         try? modifiedHeader.write(to: self.modifiedFileURL, atomically: true, encoding: .utf8)
       })
     
-      .disposed(by: disposeBag)
+    .disposed(by: disposeBag)
   }
   
   func processEvents(_ newEvents: [Event]) {
